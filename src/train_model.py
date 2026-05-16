@@ -10,8 +10,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from xgboost import XGBRegressor
-from lightgbm import LGBMRegressor
+try:
+    from xgboost import XGBRegressor
+except ImportError:  # pragma: no cover
+    XGBRegressor = None
+
+try:
+    from lightgbm import LGBMRegressor
+except ImportError:  # pragma: no cover
+    LGBMRegressor = None
 
 from data_loader import load_data, save_data
 from preprocessing import clean_data, add_features
@@ -39,11 +46,15 @@ def evaluate(y_true, y_pred, name):
 
 
 def main():
+    project_root = Path(__file__).resolve().parents[1]
+
     # 1. Load & clean
-    df = load_data('data/raw/pakistan_used_cars.csv')
+    raw_path = project_root / 'data' / 'raw' / 'pakistan_used_cars.csv'
+    df = load_data(raw_path)
     df = clean_data(df)
     df = add_features(df)
-    save_data(df, 'data/processed/cleaned_cars.csv')
+    processed_path = project_root / 'data' / 'processed' / 'cleaned_cars.csv'
+    save_data(df, processed_path)
 
     # 2. Define features
     target = 'price'
@@ -67,18 +78,27 @@ def main():
         'Random Forest': RandomForestRegressor(
             n_estimators=200, max_depth=20, n_jobs=-1, random_state=42
         ),
-        'XGBoost': XGBRegressor(
+    }
+
+    if XGBRegressor is not None:
+        models['XGBoost'] = XGBRegressor(
             n_estimators=500, learning_rate=0.05, max_depth=8,
             random_state=42, n_jobs=-1
-        ),
-        'LightGBM': LGBMRegressor(
+        )
+    else:
+        print("⚠️  xgboost not installed; skipping XGBoost")
+
+    if LGBMRegressor is not None:
+        models['LightGBM'] = LGBMRegressor(
             n_estimators=500, learning_rate=0.05, max_depth=10,
             num_leaves=64, random_state=42, n_jobs=-1
-        ),
-    }
+        )
+    else:
+        print("⚠️  lightgbm not installed; skipping LightGBM")
 
     results = []
     best_model, best_score = None, -np.inf
+    best_name = None
 
     for name, model in models.items():
         pipe = build_pipeline(model, cat_cols, num_cols)
@@ -92,13 +112,20 @@ def main():
             best_name = name
 
     # 5. Save best model
-    Path('models').mkdir(exist_ok=True)
-    joblib.dump(best_model, 'models/best_model.pkl')
+    if best_model is None or best_name is None:
+        raise RuntimeError("No model was trained; cannot save best model")
+
+    models_dir = project_root / 'models'
+    models_dir.mkdir(exist_ok=True)
+    model_path = models_dir / 'best_model.pkl'
+    joblib.dump(best_model, model_path)
     print(f"\n🏆 Best model: {best_name} (R² = {best_score:.4f})")
-    print("💾 Saved to models/best_model.pkl")
+    print(f"💾 Saved to {model_path}")
 
     # 6. Save results
-    pd.DataFrame(results).to_csv('reports/model_comparison.csv', index=False)
+    reports_dir = project_root / 'reports'
+    reports_dir.mkdir(exist_ok=True)
+    pd.DataFrame(results).to_csv(reports_dir / 'model_comparison.csv', index=False)
 
 
 if __name__ == '__main__':
